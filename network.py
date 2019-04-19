@@ -39,7 +39,7 @@ class Layer:
     def _propagate(self, inputs):
         raise NotImplementedError
 
-    def _backpropagate(self, layer_error):
+    def _backpropagate(self, layer_error, previous_inputs):
         raise NotImplementedError
 
     def _gradient_decent(self, learning_rate, previous_activations, test=False):
@@ -172,15 +172,42 @@ class Network:
         self.layers[0].gradient_decent(self.learning_rate, minibatch_inputs, True)
 
 
+class FlatteningLayer(Layer):
+    def __init__(self, input_dimensions):
+        assert isinstance(input_dimensions, tuple)
+
+        self.input_dimensions = input_dimensions
+        self.layer_size = 1;
+        for dim in input_dimensions:
+            self.layer_size *= dim
+
+        # Currently Layer params are unused
+        super().__init__(0, 0)
+
+    def _propagate(self, inputs):
+        return inputs.reshape((self.layer_size,1)), inputs.reshape((self.layer_size,1))
+
+    def _backpropagate(self, layer_error, previous_inputs):
+        return layer_error.reshape(self.input_dimensions)
+
+    def _gradient_decent(self, learning_rate, previous_activations, test=False):
+        pass
+
+
 EPOCHS = 30
 MINIBATCH_SIZE = 32
 
 
 # TODO Move SGD code inside of Network
 def main():
-    n = Network([FullyConnectedLayer(784, 30),
+    n = Network([FlatteningLayer((28,28)),
+                 FullyConnectedLayer(784, 30),
                  #FullyConnectedLayer(30, 30),
                  OutputLayer(30,10)])
+
+    # n = Network([FullyConnectedLayer([28, 28], [5, 5]),
+    #              #FullyConnectedLayer(30, 30),
+    #              OutputLayer([5, 5], 10)])
 
     training_data, validation_data, test_data = mnist_loader.load_data_wrapper()
 
@@ -192,7 +219,8 @@ def main():
         cnt = 0
         for minibatch in minibatches:
 
-            minibatch_inputs = [example[0] for example in minibatch]
+            minibatch_inputs = [np.reshape(example[0], (28, 28)) for example in minibatch]
+            # minibatch_inputs = [example[0] for example in minibatch]
             minibatch_outputs = [example[1] for example in minibatch]
 
             n.gradient_descent(minibatch_inputs, minibatch_outputs)
