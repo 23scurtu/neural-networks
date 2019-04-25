@@ -4,7 +4,9 @@ import pprint
 import mnist_loader
 import random
 import sys
-
+import timeit
+import time
+from im2col import *
 
 def sig(x):
     return 1/(1 + np.exp(-x))
@@ -194,14 +196,265 @@ class FlatteningLayer(Layer):
         pass
 
 
+class ConvolutionalLayer(Layer):
+    def __init__(self, input_dimensions, layer_size, convolution_size, stride):
+        # For now only do 2d convolutions
+        assert len(input_dimensions) == 2
+        # assert len(convolution_size) == 2
+
+        # TODO layersize unused
+
+        input_size = 1;
+
+        for dim in input_dimensions:
+            input_size *= dim
+
+        super().__init__(input_size, layer_size)
+
+        self.stride = stride
+
+        self.conv_weights = np.random.randn(convolution_size, convolution_size)
+        self.conv_bias = np.random.randn(1)
+
+        self.conv_width = convolution_size
+        self.input_dims = input_dimensions
+
+
+        # self.weights = np.random.randn(layer_size, input_size)
+        # self.biases = np.random.randn(layer_size, 1)
+
+        # TODO Should be ceil?
+        self.m_strides = math.ceil((self.input_dims[0] - self.conv_width) / self.stride)
+        self.n_strides = math.ceil((self.input_dims[1] - self.conv_width) / self.stride)
+
+        self.past_conv_errors = []
+
+    def _propagate(self, inputs):
+        # print(self.m_strides)
+        # print(self.n_strides)
+
+        # 0.016 sec
+        # TODO Currently only supports 2d input (Not 3d)
+
+        # activations = np.zeros((self.m_strides, self.n_strides))
+        # layer_inputs = np.zeros((self.m_strides, self.n_strides))
+
+        # for m in range(self.m_strides):
+        #     for n in range(self.n_strides):
+        #
+        #
+        #         input_slice = inputs[m*self.stride: m*self.stride + self.conv_width,
+        #                              n*self.stride: n*self.stride + self.conv_width]
+        #         layer_input = np.tensordot(input_slice, self.conv_weights, axes=((0, 1), (0, 1))) + self.conv_bias
+        #         activation = sig(layer_input)
+        #
+        #         # TODO [,] or [][] for efficiency?
+        #         activations[m, n] = activation
+        #         layer_inputs[m, n] = layer_input
+
+        #-------------------------------------------------------
+        #
+        # start = time.time()
+        #
+        # input_col = np.zeros((self.conv_width*self.conv_width, self.n_strides * self.m_strides))
+        # w_row = self.conv_weights.reshape((1, self.conv_width*self.conv_width))
+        #
+        # # TODO Make into large matrix rep
+        # for m in range(self.m_strides):
+        #     for n in range(self.n_strides):
+        #         input_slice = inputs[m*self.stride: m*self.stride + self.conv_width,
+        #                              n*self.stride: n*self.stride + self.conv_width]
+        #         col = input_slice.reshape((self.conv_width*self.conv_width, 1))
+        #         #print(input_col[:,m*self.conv_width + n])
+        #         input_col[:, m*self.conv_width + n] = col[:, 0]
+        #
+        # layer_inputs = np.dot(w_row, input_col).reshape((self.m_strides, self.n_strides))
+        # activations = sig(layer_inputs)
+        #
+        # end = time.time()
+        # # print('time to propagate: ')
+        # # print(end - start)
+        #
+        #----------------------------------------------------------
+
+        start = time.time()
+
+        #print(inputs.reshape((1, 1) + inputs.shape).shape)
+
+        input_col = im2col_indices(inputs.reshape((1, 1) + inputs.shape),
+                                   self.conv_width,
+                                   self.conv_width,
+                                   padding=0,
+                                   stride=self.stride)
+
+        self.past_input_col = input_col
+
+        w_row = self.conv_weights.reshape((1, self.conv_width * self.conv_width))
+
+        # print(w_row.shape)
+        # print(input_col.shape)
+
+        layer_inputs = np.dot(w_row, input_col) + self.conv_bias
+        layer_inputs = layer_inputs.reshape(self.m_strides, self.n_strides)
+
+        activations = sig(layer_inputs)
+
+        end = time.time()
+        # print('time to propagate: ')
+        # print(end - start)
+
+
+        return layer_inputs, activations
+
+    def _backpropagate(self, layer_error, previous_inputs):
+        # 0.07 sec
+
+        # TODO Currently only supports 2d input (Not 3d)
+
+        # conv_error = np.zeros((self.conv_width, self.conv_width))
+        # input_error = np.zeros(self.input_dims)
+        #
+        # for m in range(self.m_strides):
+        #     for n in range(self.n_strides):
+        #         input_slice = previous_inputs[m*self.stride: m*self.stride + self.conv_width,
+        #                                       n*self.stride: n*self.stride + self.conv_width]
+        #
+        #
+        #         conv_error = np.add(conv_error, input_slice*previous_inputs[m,n])
+        #
+        #         input_error_slice = input_error[m*self.stride: m*self.stride + self.conv_width,
+        #                                         n*self.stride: n*self.stride + self.conv_width]
+        #
+        #         input_error[m * self.stride: m * self.stride + self.conv_width,
+        #                     n * self.stride: n * self.stride + self.conv_width] = \
+        #             np.add(input_error_slice, self.conv_weights*previous_inputs[m,n])
+
+        #-------------------------------------------------------------------
+
+        # conv_error_cols = np.zeros((self.conv_width*self.conv_width, self.n_strides*self.m_strides))
+        #
+        # # This many strides needed such that two convs dont add to the same input
+        # non_interference_stride = math.ceil((self.conv_width - 1)/self.stride)
+        #
+        # # Stack of input errors to then collapse with a np.sum
+        # non_interference_input_errors = np.zeros(self.input_dims + (non_interference_stride, non_interference_stride))
+        #
+        # start = time.time()
+        #
+        # for m in range(self.m_strides):
+        #     for n in range(self.n_strides):
+        #         input_slice = previous_inputs[m*self.stride: m*self.stride + self.conv_width,
+        #                                       n*self.stride: n*self.stride + self.conv_width]
+        #
+        #         conv_error_cols[:,m*self.conv_width+n] = input_slice.reshape((self.conv_width*self.conv_width, 1))[:, 0]
+        #
+        # input_col = previous_inputs.reshape((1, previous_inputs.size))    #np.zeros((self.conv_width * self.conv_width, previous_inputs.size))
+        # w_row = self.conv_weights.reshape(( self.conv_width * self.conv_width, 1))
+        #
+        # weighted_previous_inputs = np.dot(w_row, input_col).reshape(previous_inputs.shape + (self.conv_width, self.conv_width))
+        #
+        # #self.conv_weights * previous_inputs[m_location, n_location]
+        #
+        #
+        #
+        # #for
+        #
+        # for m_layer in range(non_interference_stride):
+        #     for n_layer in range(non_interference_stride):
+        #
+        #         for m in range(math.ceil(self.m_strides/non_interference_stride)):
+        #             if m*non_interference_stride >= self.m_strides:
+        #                 continue
+        #
+        #             for n in range(math.ceil(self.n_strides / non_interference_stride)):
+        #                 if n * non_interference_stride >= self.n_strides:
+        #                     continue
+        #
+        #                 m_location = m*self.stride*non_interference_stride
+        #                 n_location = n*self.stride*non_interference_stride
+        #
+        #                 # Assumes 2 input dims, change for 3d input (m,n,:)
+        #                 non_interference_input_errors[
+        #                     m_layer + m_location: m_layer + m_location + self.conv_width,
+        #                     n_layer + n_location: n_layer + n_location + self.conv_width,
+        #                     m_layer,
+        #                     n_layer] = weighted_previous_inputs[m_location, n_location]
+        #                 #self.conv_weights*previous_inputs[m_location, n_location]
+        #
+        # end = time.time()
+        # # print('time to backpropagate: ')
+        # # print(end - start)
+        #
+        # input_error = np.sum(non_interference_input_errors, axis=(2, 3))
+        #
+        # conv_error = np.sum(conv_error_cols, axis=1).reshape((self.conv_width, self.conv_width))
+        #
+        # self.past_conv_errors.append(conv_error)
+
+        #---------------------------------------------------------------------
+
+        # TODO Cache this?
+
+        start = time.time()
+
+        input_col = self.past_input_col
+
+        #conv_error = np.sum(input_col, axis=1).reshape((self.conv_width, self.conv_width))
+
+        layer_error_row = layer_error.reshape((1, self.m_strides * self.n_strides))
+
+        conv_error = np.dot(layer_error_row, np.transpose(input_col)).reshape((self.conv_width, self.conv_width))
+
+        w_row = self.conv_weights.reshape((1, self.conv_width * self.conv_width))
+
+
+        input_error_col = np.dot(np.transpose(w_row), layer_error_row)
+
+        # print(input_error_col.shape)
+
+        input_error = col2im_indices(input_error_col,
+                                     (1, 1) + self.input_dims,
+                                     self.conv_width,
+                                     self.conv_width,
+                                     padding=0,
+                                     stride=self.stride)
+
+        self.past_conv_errors.append(conv_error)
+
+        end = time.time()
+        # print('time to backpropagate: ')
+        # print(end - start)
+
+        return input_error
+
+    def _gradient_decent(self, learning_rate, previous_activations, test=False):
+        # print(len(previous_activations))
+        # print(len(self.past_conv_errors))
+
+        # TODO Figure out gradient decent
+        # print(len(previous_activations))
+        # print(len(self.past_conv_errors))
+        assert len(previous_activations) == len(self.past_conv_errors)
+        minibatch_size = len(previous_activations)
+
+        # error_activations = [np.matmul(error, activation.transpose())
+        #                      for error, activation in zip(self.past_errors, previous_activations)]
+
+        self.conv_weights = \
+            np.subtract(self.conv_weights, (learning_rate / minibatch_size) * sum(self.past_conv_errors))
+        self.conv_bias = np.subtract(self.conv_bias, (learning_rate / minibatch_size) * sum([np.sum(error) for error in self.past_errors]))
+
+        self.past_conv_errors = []
+
 EPOCHS = 30
 MINIBATCH_SIZE = 32
 
 
 # TODO Move SGD code inside of Network
 def main():
-    n = Network([FlatteningLayer((28,28)),
-                 FullyConnectedLayer(784, 30),
+    n = Network([ConvolutionalLayer((28,28), 0, 5, 1),
+                 FlatteningLayer((23, 23)),
+                 FullyConnectedLayer(529, 30),
                  #FullyConnectedLayer(30, 30),
                  OutputLayer(30,10)])
 
@@ -223,15 +476,22 @@ def main():
             # minibatch_inputs = [example[0] for example in minibatch]
             minibatch_outputs = [example[1] for example in minibatch]
 
+
+            # start = time.time()
             n.gradient_descent(minibatch_inputs, minibatch_outputs)
+            # end = time.time()
+            # print('whole gradient decent: ')
+            # print(end - start)
 
             cnt += MINIBATCH_SIZE
-            #print(cnt)
+            # if cnt > 10000:
+            #     break
+            print(str(cnt) + ' training examples exhausted.')
 
         TEST_COUNT = len(test_data)
         successful = 0
         for example in test_data:
-            inputs = example[0]
+            inputs = np.reshape(example[0], (28, 28))
             output = example[1]
 
             result = n.propagate(inputs)
