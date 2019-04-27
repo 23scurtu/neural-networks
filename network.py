@@ -197,7 +197,7 @@ class FlatteningLayer(Layer):
 
 
 class ConvolutionalLayer(Layer):
-    def __init__(self, input_dimensions, layer_size, convolution_size, stride):
+    def __init__(self, input_dimensions, layer_size, convolution_size, stride, filter_count):
         # For now only do 2d convolutions
         assert len(input_dimensions) == 2
         # assert len(convolution_size) == 2
@@ -213,15 +213,12 @@ class ConvolutionalLayer(Layer):
 
         self.stride = stride
 
-        self.conv_weights = np.random.randn(convolution_size, convolution_size)
-        self.conv_bias = np.random.randn(1)
+        self.conv_weights = np.random.randn(filter_count, convolution_size, convolution_size)
+        self.conv_bias = np.random.randn(filter_count, 1)
 
         self.conv_width = convolution_size
+        self.conv_count = filter_count
         self.input_dims = input_dimensions
-
-
-        # self.weights = np.random.randn(layer_size, input_size)
-        # self.biases = np.random.randn(layer_size, 1)
 
         # TODO Should be ceil?
         self.m_strides = math.ceil((self.input_dims[0] - self.conv_width) / self.stride)
@@ -289,20 +286,17 @@ class ConvolutionalLayer(Layer):
 
         self.past_input_col = input_col
 
-        w_row = self.conv_weights.reshape((1, self.conv_width * self.conv_width))
-
-        # print(w_row.shape)
-        # print(input_col.shape)
+        w_row = self.conv_weights.reshape((self.conv_count, self.conv_width * self.conv_width))
 
         layer_inputs = np.dot(w_row, input_col) + self.conv_bias
-        layer_inputs = layer_inputs.reshape(self.m_strides, self.n_strides)
+        # TODO Ensure all reshapes are preforming in correct order
+        layer_inputs = layer_inputs.reshape(self.conv_count, self.m_strides, self.n_strides)
 
         activations = sig(layer_inputs)
 
         end = time.time()
         # print('time to propagate: ')
         # print(end - start)
-
 
         return layer_inputs, activations
 
@@ -393,21 +387,21 @@ class ConvolutionalLayer(Layer):
 
         #---------------------------------------------------------------------
 
-        # TODO Cache this?
+        # TODO Change caching to be defined by subclass
 
         start = time.time()
 
         input_col = self.past_input_col
 
-        #conv_error = np.sum(input_col, axis=1).reshape((self.conv_width, self.conv_width))
+        layer_error_row = layer_error.reshape((self.conv_count, self.m_strides * self.n_strides))
 
-        layer_error_row = layer_error.reshape((1, self.m_strides * self.n_strides))
+        conv_error = np.dot(layer_error_row, np.transpose(input_col)).reshape(self.conv_count,
+                                                                              self.conv_width,
+                                                                              self.conv_width)
 
-        conv_error = np.dot(layer_error_row, np.transpose(input_col)).reshape((self.conv_width, self.conv_width))
+        w_row = self.conv_weights.reshape((self.conv_count, -1))
 
-        w_row = self.conv_weights.reshape((1, self.conv_width * self.conv_width))
-
-
+        # Filter dimension is lost, all filter weight layer_errors are added together
         input_error_col = np.dot(np.transpose(w_row), layer_error_row)
 
         # print(input_error_col.shape)
@@ -437,12 +431,11 @@ class ConvolutionalLayer(Layer):
         assert len(previous_activations) == len(self.past_conv_errors)
         minibatch_size = len(previous_activations)
 
-        # error_activations = [np.matmul(error, activation.transpose())
-        #                      for error, activation in zip(self.past_errors, previous_activations)]
-
+        filter_layer_errors = [np.sum(error, axis=(1, 2)).reshape(self.conv_count, 1) for error in self.past_errors]
         self.conv_weights = \
             np.subtract(self.conv_weights, (learning_rate / minibatch_size) * sum(self.past_conv_errors))
-        self.conv_bias = np.subtract(self.conv_bias, (learning_rate / minibatch_size) * sum([np.sum(error) for error in self.past_errors]))
+        self.conv_bias = \
+            np.subtract(self.conv_bias, (learning_rate / minibatch_size) * sum(filter_layer_errors))
 
         self.past_conv_errors = []
 
@@ -452,9 +445,11 @@ MINIBATCH_SIZE = 32
 
 # TODO Move SGD code inside of Network
 def main():
-    n = Network([ConvolutionalLayer((28,28), 0, 5, 1),
-                 FlatteningLayer((23, 23)),
-                 FullyConnectedLayer(529, 30),
+    n = Network([ConvolutionalLayer((28,28), 0, convolution_size=5,
+                                    stride=1,
+                                    filter_count=3),
+                 FlatteningLayer((3, 23, 23)),
+                 FullyConnectedLayer(1587, 30),
                  #FullyConnectedLayer(30, 30),
                  OutputLayer(30,10)])
 
