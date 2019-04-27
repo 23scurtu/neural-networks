@@ -8,6 +8,7 @@ import timeit
 import time
 from im2col import *
 import pickle
+import argparse
 
 def sig(x):
     return 1/(1 + np.exp(-x))
@@ -183,13 +184,14 @@ class Network:
 
     def train(self, epochs, minibatch_size, training_data, test_data, validation_data=None, save_file=''):
         for epoch in range(epochs):
-            self.train_epoch(minibatch_size, training_data, test_data, validation_data)
+            self.train_epoch(minibatch_size, training_data, validation_data)
+            self.test(test_data)
 
             if save_file:
                 with open(save_file, 'wb') as f:
                     pickle.dump(self.layers, f)
 
-    def train_epoch(self, minibatch_size, training_data, test_data, validation_data=None):
+    def train_epoch(self, minibatch_size, training_data, validation_data=None):
         random.shuffle(training_data)
 
         minibatches = [training_data[k * minibatch_size:(k + 1) * minibatch_size] for k in
@@ -208,11 +210,13 @@ class Network:
             # print(end - start)
 
             cnt += minibatch_size
-            if cnt > 1000:
-                return
-            print(str(cnt) + ' training examples exhausted.')
+            # if cnt > 1000:
+            #     return
 
-        TEST_COUNT = len(test_data)
+            # TODO Make verbose option
+            # print(str(cnt) + ' training examples exhausted.')
+
+    def test(self, test_data):
         successful = 0
         for example in test_data:
             inputs = np.reshape(example[0], (28, 28))
@@ -223,7 +227,7 @@ class Network:
             if np.argmax(result) == output:
                 successful += 1
 
-        print(successful / TEST_COUNT * 100)
+        print(successful / len(test_data) * 100)
 
 
 class FlatteningLayer(Layer):
@@ -506,10 +510,15 @@ def main():
                  #FullyConnectedLayer(30, 30),
                  OutputLayer(30,10)])
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-s', '--save', default='', help='Save network after every epoch to the provided filename.')
+    parser.add_argument('-t', '--test', default='', help='Test saved network.')
+    args = parser.parse_args()
+
     instance_filename = ''
-    if len(sys.argv) > 1:
-        instance_filename = sys.argv[1]
-        n.load(instance_filename)
+    if args.save:
+        instance_filename = args.save
+        n.load(args.save)
 
     # n = Network([FullyConnectedLayer([28, 28], [5, 5]),
     #              #FullyConnectedLayer(30, 30),
@@ -521,11 +530,16 @@ def main():
     training_data = [[example[0].reshape(28,28), example[1]] for example in training_data]
     test_data = [[example[0].reshape(28, 28), example[1]] for example in test_data]
 
-    n.train(epochs=30,
-            minibatch_size=32,
-            training_data=training_data,
-            test_data=test_data,
-            save_file=instance_filename)
+    if args.test:
+        n.load(args.test)
+        n.test(test_data)
+
+    else:
+        n.train(epochs=30,
+                minibatch_size=32,
+                training_data=training_data,
+                test_data=test_data,
+                save_file=instance_filename)
 
 
 if __name__ == '__main__':
