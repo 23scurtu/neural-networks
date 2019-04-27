@@ -7,6 +7,7 @@ import sys
 import timeit
 import time
 from im2col import *
+import pickle
 
 def sig(x):
     return 1/(1 + np.exp(-x))
@@ -131,7 +132,7 @@ class OutputLayer(FullyConnectedLayer):
 
 
 class Network:
-    def __init__(self, layers):
+    def __init__(self, layers=None):
         if len(layers) < 1:
             print("Error: There must be at least 1 layers.")
             raise ValueError
@@ -173,42 +174,56 @@ class Network:
         # TODO This has to be done after since it deletes cached activations, change caching?
         self.layers[0].gradient_decent(self.learning_rate, minibatch_inputs, True)
 
-    def train(self, epochs, minibatch_size, training_data, test_data, validation_data=None):
+    def load(self, pickle_file):
+        try:
+            with open(pickle_file, 'rb') as f:
+                self.layers = pickle.load(f)
+        except FileNotFoundError:
+            pass
+
+    def train(self, epochs, minibatch_size, training_data, test_data, validation_data=None, save_file=''):
         for epoch in range(epochs):
-            random.shuffle(training_data)
+            self.train_epoch(minibatch_size, training_data, test_data, validation_data)
 
-            minibatches = [training_data[k * minibatch_size:(k + 1) * minibatch_size] for k in
-                           range(math.floor(len(training_data) / minibatch_size))]
+            if save_file:
+                with open(save_file, 'wb') as f:
+                    pickle.dump(self.layers, f)
 
-            cnt = 0
-            for minibatch in minibatches:
-                minibatch_inputs = [example[0] for example in minibatch]
-                # minibatch_inputs = [example[0] for example in minibatch]
-                minibatch_outputs = [example[1] for example in minibatch]
+    def train_epoch(self, minibatch_size, training_data, test_data, validation_data=None):
+        random.shuffle(training_data)
 
-                # start = time.time()
-                self.gradient_descent(minibatch_inputs, minibatch_outputs)
-                # end = time.time()
-                # print('whole gradient decent: ')
-                # print(end - start)
+        minibatches = [training_data[k * minibatch_size:(k + 1) * minibatch_size] for k in
+                       range(math.floor(len(training_data) / minibatch_size))]
 
-                cnt += minibatch_size
-                # if cnt > 10000:
-                #     break
-                print(str(cnt) + ' training examples exhausted.')
+        cnt = 0
+        for minibatch in minibatches:
+            minibatch_inputs = [example[0] for example in minibatch]
+            # minibatch_inputs = [example[0] for example in minibatch]
+            minibatch_outputs = [example[1] for example in minibatch]
 
-            TEST_COUNT = len(test_data)
-            successful = 0
-            for example in test_data:
-                inputs = np.reshape(example[0], (28, 28))
-                output = example[1]
+            # start = time.time()
+            self.gradient_descent(minibatch_inputs, minibatch_outputs)
+            # end = time.time()
+            # print('whole gradient decent: ')
+            # print(end - start)
 
-                result = self.propagate(inputs)
+            cnt += minibatch_size
+            if cnt > 1000:
+                return
+            print(str(cnt) + ' training examples exhausted.')
 
-                if np.argmax(result) == output:
-                    successful += 1
+        TEST_COUNT = len(test_data)
+        successful = 0
+        for example in test_data:
+            inputs = np.reshape(example[0], (28, 28))
+            output = example[1]
 
-            print(successful / TEST_COUNT * 100)
+            result = self.propagate(inputs)
+
+            if np.argmax(result) == output:
+                successful += 1
+
+        print(successful / TEST_COUNT * 100)
 
 
 class FlatteningLayer(Layer):
@@ -491,6 +506,11 @@ def main():
                  #FullyConnectedLayer(30, 30),
                  OutputLayer(30,10)])
 
+    instance_filename = ''
+    if len(sys.argv) > 1:
+        instance_filename = sys.argv[1]
+        n.load(instance_filename)
+
     # n = Network([FullyConnectedLayer([28, 28], [5, 5]),
     #              #FullyConnectedLayer(30, 30),
     #              OutputLayer([5, 5], 10)])
@@ -504,7 +524,8 @@ def main():
     n.train(epochs=30,
             minibatch_size=32,
             training_data=training_data,
-            test_data=test_data)
+            test_data=test_data,
+            save_file=instance_filename)
 
 
 if __name__ == '__main__':
