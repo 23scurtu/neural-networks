@@ -173,6 +173,43 @@ class Network:
         # TODO This has to be done after since it deletes cached activations, change caching?
         self.layers[0].gradient_decent(self.learning_rate, minibatch_inputs, True)
 
+    def train(self, epochs, minibatch_size, training_data, test_data, validation_data=None):
+        for epoch in range(epochs):
+            random.shuffle(training_data)
+
+            minibatches = [training_data[k * minibatch_size:(k + 1) * minibatch_size] for k in
+                           range(math.floor(len(training_data) / minibatch_size))]
+
+            cnt = 0
+            for minibatch in minibatches:
+                minibatch_inputs = [example[0] for example in minibatch]
+                # minibatch_inputs = [example[0] for example in minibatch]
+                minibatch_outputs = [example[1] for example in minibatch]
+
+                # start = time.time()
+                self.gradient_descent(minibatch_inputs, minibatch_outputs)
+                # end = time.time()
+                # print('whole gradient decent: ')
+                # print(end - start)
+
+                cnt += minibatch_size
+                # if cnt > 10000:
+                #     break
+                print(str(cnt) + ' training examples exhausted.')
+
+            TEST_COUNT = len(test_data)
+            successful = 0
+            for example in test_data:
+                inputs = np.reshape(example[0], (28, 28))
+                output = example[1]
+
+                result = self.propagate(inputs)
+
+                if np.argmax(result) == output:
+                    successful += 1
+
+            print(successful / TEST_COUNT * 100)
+
 
 class FlatteningLayer(Layer):
     def __init__(self, input_dimensions):
@@ -445,7 +482,8 @@ MINIBATCH_SIZE = 32
 
 # TODO Move SGD code inside of Network
 def main():
-    n = Network([ConvolutionalLayer((28,28), 0, convolution_size=5,
+    n = Network([ConvolutionalLayer((28, 28), 0,
+                                    convolution_size=5,
                                     stride=1,
                                     filter_count=3),
                  FlatteningLayer((3, 23, 23)),
@@ -459,47 +497,14 @@ def main():
 
     training_data, validation_data, test_data = mnist_loader.load_data_wrapper()
 
-    for epoch in range(EPOCHS):
-        random.shuffle(training_data)
+    # Reshape inputs
+    training_data = [[example[0].reshape(28,28), example[1]] for example in training_data]
+    test_data = [[example[0].reshape(28, 28), example[1]] for example in test_data]
 
-        minibatches = [training_data[k*MINIBATCH_SIZE:(k+1)*MINIBATCH_SIZE] for k in range(math.floor(len(training_data)/MINIBATCH_SIZE))]
-
-        cnt = 0
-        for minibatch in minibatches:
-
-            minibatch_inputs = [np.reshape(example[0], (28, 28)) for example in minibatch]
-            # minibatch_inputs = [example[0] for example in minibatch]
-            minibatch_outputs = [example[1] for example in minibatch]
-
-
-            # start = time.time()
-            n.gradient_descent(minibatch_inputs, minibatch_outputs)
-            # end = time.time()
-            # print('whole gradient decent: ')
-            # print(end - start)
-
-            cnt += MINIBATCH_SIZE
-            # if cnt > 10000:
-            #     break
-            print(str(cnt) + ' training examples exhausted.')
-
-        TEST_COUNT = len(test_data)
-        successful = 0
-        for example in test_data:
-            inputs = np.reshape(example[0], (28, 28))
-            output = example[1]
-
-            result = n.propagate(inputs)
-
-            if np.argmax(result) == output:
-                successful += 1
-
-        print(successful/TEST_COUNT*100)
-
-        # for layer in n.layers:
-        #     # np.set_printoptions(threshold=sys.maxsize)
-        #     print(np.subtract(layer.weights, layer.orig_weights))
-        #     print('====================================================================')
+    n.train(epochs=30,
+            minibatch_size=32,
+            training_data=training_data,
+            test_data=test_data)
 
 
 if __name__ == '__main__':
