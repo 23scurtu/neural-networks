@@ -22,6 +22,17 @@ def sigp(x):
 # sigp = np.vectorize(single_sigp)
 
 
+def relu(x):
+    return np.maximum(0, x)
+
+
+def relup(x):
+    r = np.copy(x)
+    r[r <= 0] = 0
+    r[r > 0] = 1
+    return r
+
+
 class Layer:
     def __init__(self, input_size, output_size):
         self._last_inputs = None
@@ -210,11 +221,11 @@ class Network:
             # print(end - start)
 
             cnt += minibatch_size
-            # if cnt > 1000:
+            # if cnt > 5000:
             #     return
 
             # TODO Make verbose option
-            # print(str(cnt) + ' training examples exhausted.')
+            print(str(cnt) + ' training examples exhausted.')
 
     def test(self, test_data):
         successful = 0
@@ -255,8 +266,16 @@ class FlatteningLayer(Layer):
 class ConvolutionalLayer(Layer):
     def __init__(self, input_dimensions, layer_size, convolution_size, stride, filter_count):
         # For now only do 2d convolutions
-        assert len(input_dimensions) == 2
+        # assert len(input_dimensions) == 2
         # assert len(convolution_size) == 2
+
+        if len(input_dimensions) == 2:
+            input_dimensions = (1, 1) + input_dimensions
+        elif len(input_dimensions) == 3:
+            input_dimensions = (1,) + input_dimensions
+        else:
+            print('Invalid ConvolutionalLayer input dimensions.')
+            raise ValueError
 
         # TODO layersize unused
 
@@ -269,7 +288,9 @@ class ConvolutionalLayer(Layer):
 
         self.stride = stride
 
-        self.conv_weights = np.random.randn(filter_count, convolution_size, convolution_size)
+        self.feature_count = input_dimensions[1]
+
+        self.conv_weights = np.random.randn(filter_count, self.feature_count, convolution_size, convolution_size)
         self.conv_bias = np.random.randn(filter_count, 1)
 
         self.conv_width = convolution_size
@@ -277,8 +298,8 @@ class ConvolutionalLayer(Layer):
         self.input_dims = input_dimensions
 
         # TODO Should be ceil?
-        self.m_strides = math.ceil((self.input_dims[0] - self.conv_width) / self.stride)
-        self.n_strides = math.ceil((self.input_dims[1] - self.conv_width) / self.stride)
+        self.m_strides = math.ceil((self.input_dims[2] - self.conv_width) / self.stride)
+        self.n_strides = math.ceil((self.input_dims[3] - self.conv_width) / self.stride)
 
         self.past_conv_errors = []
 
@@ -334,7 +355,7 @@ class ConvolutionalLayer(Layer):
 
         #print(inputs.reshape((1, 1) + inputs.shape).shape)
 
-        input_col = im2col_indices(inputs.reshape((1, 1) + inputs.shape),
+        input_col = im2col_indices(inputs.reshape(self.input_dims),
                                    self.conv_width,
                                    self.conv_width,
                                    padding=0,
@@ -342,8 +363,8 @@ class ConvolutionalLayer(Layer):
 
         self.past_input_col = input_col
 
-        w_row = self.conv_weights.reshape((self.conv_count, self.conv_width * self.conv_width))
-
+        w_row = self.conv_weights.reshape((self.conv_count, -1))
+        # print(self.conv_weights.shape)
         layer_inputs = np.dot(w_row, input_col) + self.conv_bias
         # TODO Ensure all reshapes are preforming in correct order
         layer_inputs = layer_inputs.reshape(self.conv_count, self.m_strides, self.n_strides)
@@ -449,11 +470,10 @@ class ConvolutionalLayer(Layer):
 
         input_col = self.past_input_col
 
+        # layer_error = np.multiply(layer_error, relup(self.last_inputs))
         layer_error_row = layer_error.reshape((self.conv_count, self.m_strides * self.n_strides))
 
-        conv_error = np.dot(layer_error_row, np.transpose(input_col)).reshape(self.conv_count,
-                                                                              self.conv_width,
-                                                                              self.conv_width)
+        conv_error = np.dot(layer_error_row, np.transpose(input_col)).reshape(self.conv_weights.shape)
 
         w_row = self.conv_weights.reshape((self.conv_count, -1))
 
@@ -463,7 +483,7 @@ class ConvolutionalLayer(Layer):
         # print(input_error_col.shape)
 
         input_error = col2im_indices(input_error_col,
-                                     (1, 1) + self.input_dims,
+                                     self.input_dims,
                                      self.conv_width,
                                      self.conv_width,
                                      padding=0,
@@ -474,6 +494,9 @@ class ConvolutionalLayer(Layer):
         end = time.time()
         # print('time to backpropagate: ')
         # print(end - start)
+
+        # TODO Separate activation functions into their own layers.
+        input_error = np.multiply(input_error, sigp(previous_inputs))
 
         return input_error
 
@@ -487,28 +510,42 @@ class ConvolutionalLayer(Layer):
         assert len(previous_activations) == len(self.past_conv_errors)
         minibatch_size = len(previous_activations)
 
-        filter_layer_errors = [np.sum(error, axis=(1, 2)).reshape(self.conv_count, 1) for error in self.past_errors]
+        filter_layer_errors = [np.sum(error, axis=(2, 3)).reshape(self.conv_count, 1) for error in self.past_errors]
+        # TODO Lowering the filter size (increasing number of filter applications) requires decrease in learning rate?
         self.conv_weights = \
-            np.subtract(self.conv_weights, (learning_rate / minibatch_size) * sum(self.past_conv_errors))
+            np.subtract(self.conv_weights, (0.03 / minibatch_size) * sum(self.past_conv_errors))
         self.conv_bias = \
-            np.subtract(self.conv_bias, (learning_rate / minibatch_size) * sum(filter_layer_errors))
+            np.subtract(self.conv_bias, (0.03 / minibatch_size) * sum(filter_layer_errors))
 
         self.past_conv_errors = []
 
 EPOCHS = 30
-MINIBATCH_SIZE = 32
+MINIBATCH_SIZE = 64
 
 
 # TODO Move SGD code inside of Network
 def main():
-    n = Network([ConvolutionalLayer((28, 28), 0,
+    # np.random.seed(0)
+
+    n = Network([ConvolutionalLayer((1, 28, 28), 0,
                                     convolution_size=5,
                                     stride=1,
-                                    filter_count=3),
-                 FlatteningLayer((3, 23, 23)),
-                 FullyConnectedLayer(1587, 30),
+                                    filter_count=16),
+
+                 ConvolutionalLayer((16, 23, 23), 0,
+                                    convolution_size=3,
+                                    stride=1,
+                                    filter_count=8),
+
+                # TODO Should the one below need to be there?
+                 FlatteningLayer((1, 8, 20, 20)),
+                 FullyConnectedLayer(3200, 30),
                  #FullyConnectedLayer(30, 30),
                  OutputLayer(30,10)])
+
+    # n = Network([FullyConnectedLayer(784, 30),
+    #              FullyConnectedLayer(30, 30),
+    #              OutputLayer(30, 10)])
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--save', default='', help='Save network after every epoch to the provided filename.')
@@ -520,15 +557,14 @@ def main():
         instance_filename = args.save
         n.load(args.save)
 
-    # n = Network([FullyConnectedLayer([28, 28], [5, 5]),
-    #              #FullyConnectedLayer(30, 30),
-    #              OutputLayer([5, 5], 10)])
 
     training_data, validation_data, test_data = mnist_loader.load_data_wrapper()
 
     # Reshape inputs
-    training_data = [[example[0].reshape(28,28), example[1]] for example in training_data]
-    test_data = [[example[0].reshape(28, 28), example[1]] for example in test_data]
+    training_data = [[example[0].reshape(1, 28, 28), example[1]] for example in training_data]
+    test_data = [[example[0].reshape(1, 28, 28), example[1]] for example in test_data]
+    # training_data = [[example[0].flatten(), example[1]] for example in training_data]
+    # test_data = [[example[0].flatten(), example[1]] for example in test_data]
 
     if args.test:
         n.load(args.test)
@@ -536,7 +572,7 @@ def main():
 
     else:
         n.train(epochs=30,
-                minibatch_size=32,
+                minibatch_size=64,
                 training_data=training_data,
                 test_data=test_data,
                 save_file=instance_filename)
