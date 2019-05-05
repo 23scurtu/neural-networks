@@ -10,6 +10,7 @@ from im2col import *
 import pickle
 import argparse
 
+
 def sig(x):
     return 1/(1 + np.exp(-x))
 
@@ -34,13 +35,18 @@ def relup(x):
 
 
 class Layer:
-    def __init__(self, input_size, output_size):
+    def __init__(self, input_size, output_size, activation_function=None, activation_derivative=None):
         self._last_inputs = None
         self._past_errors = []
         self._past_activations = []
 
+        self.activation_function = activation_function
+        self.activation_derivative = activation_derivative
+
     @property
     def last_inputs(self):
+        # weighted input to the neurons in this layer, prior to activation function.
+        # TODO Rename to last_weighted_inputs?
         return self._last_inputs
 
     @property
@@ -61,19 +67,27 @@ class Layer:
         raise NotImplementedError
 
     def propagate(self, previous_activation, cache=False):
-        inputs, activations = self._propagate(previous_activation)
+        layer_inputs = self._propagate(previous_activation)
+        activations = (self.activation_function(layer_inputs) if self.activation_function else layer_inputs)
+
         if cache:
             self._past_activations.append(activations)
 
-        self._last_inputs = inputs
+        self._last_inputs = layer_inputs
 
         return activations
 
     def backpropagate(self, layer_error, previous_inputs, cache):
+        # TODO Since activation function refactor, previous_inputs are no longer used.
         if self._last_inputs is None:
             print("Attempting to backpropagate before having propagated")
 
+        # Layer error passed in is not yet w.r.t to layer inputs
+        if self.activation_derivative:
+            layer_error = np.multiply(layer_error, self.activation_derivative(self.last_inputs))
+
         error = self._backpropagate(layer_error, previous_inputs)
+
         if cache:
             self._past_errors.append(layer_error)
         return error
@@ -87,7 +101,7 @@ class Layer:
 
 
 class FullyConnectedLayer(Layer):
-    def __init__(self, input_size, layer_size):
+    def __init__(self, input_size, layer_size, activation_function=sig, activation_derivative=sigp):
         self.weights = np.random.randn(layer_size, input_size)
         self.biases = np.random.randn(layer_size, 1)
 
@@ -95,7 +109,7 @@ class FullyConnectedLayer(Layer):
         # self.orig_weights = self.weights.copy()
         # self.orig_biases = self.biases.copy()
 
-        super().__init__(layer_size, input_size)
+        super().__init__(layer_size, input_size, activation_function, activation_derivative)
 
     def _propagate(self, input):
         # print(self.weights.shape)
@@ -103,20 +117,21 @@ class FullyConnectedLayer(Layer):
 
         np.matmul(self.weights, input)
         layer_inputs = np.add(np.matmul(self.weights, input), self.biases)
-        layer_activations = sig(layer_inputs)
 
-        return layer_inputs, layer_activations
+        return layer_inputs
 
     def _backpropagate(self, layer_error, previous_inputs):
         # print(self.weights.transpose().shape)
         # print(layer_error.shape)
 
-        return np.multiply(np.matmul(self.weights.transpose(), layer_error), sigp(previous_inputs))
+        return np.matmul(self.weights.transpose(), layer_error)
 
     # Currently test is unused
     def _gradient_decent(self, learning_rate, previous_activations, test=False):
         # print(len(previous_activations))
         # print(len(self.past_errors))
+
+        # TODO Change all previous to previous_layer
 
         assert len(previous_activations) == len(self.past_errors)
         minibatch_size = len(previous_activations)
@@ -130,7 +145,7 @@ class FullyConnectedLayer(Layer):
 
 class OutputLayer(FullyConnectedLayer):
     def __init__(self, input_size, layer_size):
-        super().__init__(input_size, layer_size)
+        super().__init__(input_size, layer_size, activation_function=sig, activation_derivative=None)
 
     def output_error(self, actual, expected):
         error = np.multiply(self.calc_cost_partial_derivs(expected, actual), sigp(self.last_inputs))
@@ -250,11 +265,11 @@ class FlatteningLayer(Layer):
         for dim in input_dimensions:
             self.layer_size *= dim
 
-        # Currently Layer params are unused
-        super().__init__(0, 0)
+        # Currently Layer params are unused, initialize with no activation function.
+        super().__init__(0, 0, activation_function=None, activation_derivative=None)
 
     def _propagate(self, inputs):
-        return inputs.reshape((self.layer_size,1)), inputs.reshape((self.layer_size,1))
+        return inputs.reshape((self.layer_size, 1))
 
     def _backpropagate(self, layer_error, previous_inputs):
         return layer_error.reshape(self.input_dimensions)
@@ -264,7 +279,7 @@ class FlatteningLayer(Layer):
 
 
 class ConvolutionalLayer(Layer):
-    def __init__(self, input_dimensions, layer_size, convolution_size, stride, filter_count):
+    def __init__(self, input_dimensions, layer_size, convolution_size, stride, filter_count, activation_function=sig, activation_derivative=sigp):
         # For now only do 2d convolutions
         # assert len(input_dimensions) == 2
         # assert len(convolution_size) == 2
@@ -284,7 +299,7 @@ class ConvolutionalLayer(Layer):
         for dim in input_dimensions:
             input_size *= dim
 
-        super().__init__(input_size, layer_size)
+        super().__init__(input_size, layer_size, activation_function, activation_derivative)
 
         self.stride = stride
 
@@ -369,13 +384,11 @@ class ConvolutionalLayer(Layer):
         # TODO Ensure all reshapes are preforming in correct order
         layer_inputs = layer_inputs.reshape(self.conv_count, self.m_strides, self.n_strides)
 
-        activations = sig(layer_inputs)
-
         end = time.time()
         # print('time to propagate: ')
         # print(end - start)
 
-        return layer_inputs, activations
+        return layer_inputs
 
     def _backpropagate(self, layer_error, previous_inputs):
         # 0.07 sec
@@ -475,7 +488,9 @@ class ConvolutionalLayer(Layer):
 
         conv_error = np.dot(layer_error_row, np.transpose(input_col)).reshape(self.conv_weights.shape)
 
+        # TODO Filter rotation needed?
         w_row = self.conv_weights.reshape((self.conv_count, -1))
+        # w_row = np.rot90(self.conv_weights, 2, (2, 3)).reshape((self.conv_count, -1))
 
         # Filter dimension is lost, all filter weight layer_errors are added together
         input_error_col = np.dot(np.transpose(w_row), layer_error_row)
@@ -495,8 +510,7 @@ class ConvolutionalLayer(Layer):
         # print('time to backpropagate: ')
         # print(end - start)
 
-        # TODO Separate activation functions into their own layers.
-        input_error = np.multiply(input_error, sigp(previous_inputs))
+        # input_error = np.multiply(input_error, sigp(previous_inputs))
 
         return input_error
 
@@ -512,6 +526,7 @@ class ConvolutionalLayer(Layer):
 
         filter_layer_errors = [np.sum(error, axis=(2, 3)).reshape(self.conv_count, 1) for error in self.past_errors]
         # TODO Lowering the filter size (increasing number of filter applications) requires decrease in learning rate?
+        # TODO Make learning rate configurable per layer?
         self.conv_weights = \
             np.subtract(self.conv_weights, (0.03 / minibatch_size) * sum(self.past_conv_errors))
         self.conv_bias = \
@@ -519,11 +534,33 @@ class ConvolutionalLayer(Layer):
 
         self.past_conv_errors = []
 
+
+# TODO Currently unused, may not be stable since activation functions are also built into Layer base class.
+class ActivationLayer(Layer):
+    def __init__(self, function, derivative):
+
+        self.function = function
+        self.derivative = derivative
+        self.last_propagate_inputs = None
+
+        # Currently Layer params are unused
+        super().__init__(0, 0)
+
+    def _propagate(self, inputs):
+        self.last_propagate_inputs = inputs
+        return self.function(inputs)
+
+    def _backpropagate(self, layer_error, previous_inputs):
+        return np.multiply(layer_error, self.derivative(self.last_propagate_inputs))
+
+    def _gradient_decent(self, learning_rate, previous_activations, test=False):
+        pass
+
+
 EPOCHS = 30
 MINIBATCH_SIZE = 64
 
 
-# TODO Move SGD code inside of Network
 def main():
     # np.random.seed(0)
 
@@ -531,21 +568,35 @@ def main():
                                     convolution_size=5,
                                     stride=1,
                                     filter_count=16),
+                 # ActivationLayer(sig, sigp),
 
                  ConvolutionalLayer((16, 23, 23), 0,
                                     convolution_size=3,
                                     stride=1,
                                     filter_count=8),
+                 # ActivationLayer(sig, sigp),
 
                 # TODO Should the one below need to be there?
                  FlatteningLayer((1, 8, 20, 20)),
                  FullyConnectedLayer(3200, 30),
-                 #FullyConnectedLayer(30, 30),
-                 OutputLayer(30,10)])
+                 # ActivationLayer(sig, sigp),
 
-    # n = Network([FullyConnectedLayer(784, 30),
+                 #FullyConnectedLayer(30, 30),
+                 OutputLayer(30, 10)])
+
+                 # OutputLayer(3200, 10)])
+
+    # n = Network([FlatteningLayer((28, 28)),
+    #              FullyConnectedLayer(784, 30),
     #              FullyConnectedLayer(30, 30),
     #              OutputLayer(30, 10)])
+    #
+    # # 89.05999999999999
+    # # 89.38000000000001
+    # # 89.47
+    # # 89.34
+    # # 89.95
+    # # 89.64
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--save', default='', help='Save network after every epoch to the provided filename.')
