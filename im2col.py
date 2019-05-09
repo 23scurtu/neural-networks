@@ -9,9 +9,9 @@ def get_im2col_indices(x_shape, field_height, field_width, padding=1, stride=1):
     assert (W + 2 * padding - field_height) % stride == 0
 
     # TODO Had to cast to int???
-    # TODO Had to change from (H + 2 * padding - field_height) / stride + 1 to ceil
-    out_height = int(math.ceil((H + 2 * padding - field_height) / stride))
-    out_width = int(math.ceil((W + 2 * padding - field_width) / stride))
+    # TODO Had to change from (H + 2 * padding - field_height) / stride + 1
+    out_height = int((H + 2 * padding - field_height) / stride + 1)
+    out_width = int((W + 2 * padding - field_width) / stride + 1)
 
     i0 = np.repeat(np.arange(field_height), field_width)
     i0 = np.tile(i0, C)

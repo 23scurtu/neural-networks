@@ -313,8 +313,8 @@ class ConvolutionalLayer(Layer):
         self.input_dims = input_dimensions
 
         # TODO Should be ceil?
-        self.m_strides = math.ceil((self.input_dims[2] - self.conv_width) / self.stride)
-        self.n_strides = math.ceil((self.input_dims[3] - self.conv_width) / self.stride)
+        self.m_strides = int((self.input_dims[2] - self.conv_width) / self.stride + 1)
+        self.n_strides = int((self.input_dims[3] - self.conv_width) / self.stride + 1)
 
         self.past_conv_errors = []
 
@@ -528,11 +528,77 @@ class ConvolutionalLayer(Layer):
         # TODO Lowering the filter size (increasing number of filter applications) requires decrease in learning rate?
         # TODO Make learning rate configurable per layer?
         self.conv_weights = \
-            np.subtract(self.conv_weights, (0.03 / minibatch_size) * sum(self.past_conv_errors))
+            np.subtract(self.conv_weights, (0.006 / minibatch_size) * sum(self.past_conv_errors))
         self.conv_bias = \
-            np.subtract(self.conv_bias, (0.03 / minibatch_size) * sum(filter_layer_errors))
+            np.subtract(self.conv_bias, (0.006 / minibatch_size) * sum(filter_layer_errors))
 
         self.past_conv_errors = []
+
+
+# TODO Currently unused, may not be stable since activation functions are also built into Layer base class.
+class MaxPoolingLayer(Layer):
+    def __init__(self, input_dimensions, layer_size, pool_width, stride):
+        # if len(input_dimensions) == 2:
+        #     input_dimensions = (1, 1) + input_dimensions
+        # elif len(input_dimensions) == 3:
+        #     input_dimensions = (1,) + input_dimensions
+        if not len(input_dimensions) == 4:
+            print('Invalid ConvolutionalLayer input dimensions.')
+            raise ValueError
+
+        input_size = 1
+        for dim in input_dimensions:
+            input_size *= dim
+
+        super().__init__(input_size, layer_size, activation_function=None, activation_derivative=None)
+
+        self.stride = stride
+        self.pool_width = pool_width
+
+        self.feature_count = input_dimensions[1]
+        self.input_dims = input_dimensions
+
+        # TODO Should be ceil?
+        self.m_strides = int((self.input_dims[2] - self.pool_width) / self.stride + 1)
+        self.n_strides = int((self.input_dims[3] - self.pool_width) / self.stride + 1)
+
+    def _propagate(self, inputs):
+        input_col = im2col_indices(inputs.reshape((self.input_dims[0]*self.input_dims[1], 1) + self.input_dims[2:]),
+                                   self.pool_width,
+                                   self.pool_width,
+                                   padding=0,
+                                   stride=self.stride)
+
+        self.past_input_col = input_col
+        self.past_input_indices = np.argmax(input_col, axis=0)
+
+        layer_inputs = input_col[self.past_input_indices, range(self.past_input_indices.size)]
+        layer_inputs = layer_inputs.reshape(self.m_strides, self.n_strides, 1, self.feature_count)
+        layer_inputs = layer_inputs.transpose(2, 3, 0, 1)
+
+        return layer_inputs
+
+    def _backpropagate(self, layer_error, previous_inputs):
+        input_col = self.past_input_col
+
+        layer_error_row = layer_error.transpose(2, 3, 0, 1).reshape(-1) # layer_error.reshape((self.feature_count, self.m_strides * self.n_strides))
+
+        input_error_col = np.zeros_like(input_col)
+        input_error_col[self.past_input_indices, range(self.past_input_indices.size)] = layer_error_row
+
+        input_error = col2im_indices(input_error_col,
+                                     (self.input_dims[0]*self.input_dims[1], 1) + self.input_dims[2:],
+                                     self.pool_width,
+                                     self.pool_width,
+                                     padding=0,
+                                     stride=self.stride)
+
+        input_error = input_error.reshape(self.input_dims)
+
+        return input_error
+
+    def _gradient_decent(self, learning_rate, previous_activations, test=False):
+        pass
 
 
 # TODO Currently unused, may not be stable since activation functions are also built into Layer base class.
@@ -568,21 +634,23 @@ def main():
                                     convolution_size=5,
                                     stride=1,
                                     filter_count=16),
+                 MaxPoolingLayer((1, 16, 24, 24), 0, pool_width=2, stride=2),
                  # ActivationLayer(sig, sigp),
 
-                 ConvolutionalLayer((16, 23, 23), 0,
-                                    convolution_size=3,
+                 ConvolutionalLayer((16, 12, 12), 0,
+                                    convolution_size=5,
                                     stride=1,
-                                    filter_count=8),
+                                    filter_count=16),
+                 MaxPoolingLayer((1, 16, 8, 8), 0, pool_width=2, stride=2),
                  # ActivationLayer(sig, sigp),
 
-                # TODO Should the one below need to be there?
-                 FlatteningLayer((1, 8, 20, 20)),
-                 FullyConnectedLayer(3200, 30),
+                # Pooling steps messing up?
+                 FlatteningLayer((1, 16, 4, 4)),
+                 FullyConnectedLayer(256, 100),
                  # ActivationLayer(sig, sigp),
 
                  #FullyConnectedLayer(30, 30),
-                 OutputLayer(30, 10)])
+                 OutputLayer(100, 10)])
 
                  # OutputLayer(3200, 10)])
 
