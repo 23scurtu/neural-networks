@@ -214,17 +214,20 @@ class Network:
         except FileNotFoundError:
             pass
 
-    def train(self, epochs, minibatch_size, training_data, test_data, learning_rate=None, validation_data=None, save_file=''):
+    def train(self, epochs, minibatch_size, training_data, test_data, learning_rate=None, epoch_size_limit=None, validation_data=None, save_file=''):
         for epoch in range(epochs):
-            self.train_epoch(minibatch_size, training_data, learning_rate, validation_data)
+            self.train_epoch(minibatch_size, training_data, learning_rate, epoch_size_limit, validation_data)
             self.test(test_data)
 
             if save_file:
                 with open(save_file, 'wb') as f:
                     pickle.dump(self.layers, f)
 
-    def train_epoch(self, minibatch_size, training_data, learning_rate, validation_data=None):
+    def train_epoch(self, minibatch_size, training_data, learning_rate, epoch_size_limit, validation_data=None):
         random.shuffle(training_data)
+
+        if epoch_size_limit is not None:
+            training_data = training_data[:epoch_size_limit]
 
         minibatches = [training_data[k * minibatch_size:(k + 1) * minibatch_size] for k in
                        range(math.floor(len(training_data) / minibatch_size))]
@@ -635,6 +638,7 @@ MINIBATCH_SIZE = 64
 
 def main():
     np.random.seed(1234)
+    random.seed(5678)
 
     n = Network([ConvolutionalLayer((1, 28, 28), 0,
                                     convolution_size=5,
@@ -700,6 +704,7 @@ def main():
                 minibatch_size=64,
                 training_data=training_data,
                 learning_rate=[0.006, None, 0.006, None, None, 3, 3], # 0.3,
+                epoch_size_limit=5000,
                 test_data=test_data,
                 save_file=instance_filename)
 
