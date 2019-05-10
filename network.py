@@ -24,12 +24,15 @@ def sigp(x):
 
 
 def relu(x):
-    return np.maximum(0, x)
+    # return np.maximum(0, x)
+    y1 = ((x > 0) * x)
+    y2 = ((x <= 0) * x * 0.01)
+    return y1 + y2
 
 
 def relup(x):
     r = np.copy(x)
-    r[r <= 0] = 0
+    r[r <= 0] = 0.01
     r[r > 0] = 1
     return r
 
@@ -223,8 +226,17 @@ class Network:
             else:
                 epoch_lr = learning_rate
 
-            self.train_epoch(minibatch_size, training_data, epoch_lr, epoch_size_limit, validation_data)
-            self.test(test_data)
+            results = []
+            results.append("Epoch " + str(epoch_cnt))
+            results.append("Learning rate: " + str(epoch_lr))
+
+            training_data_used = self.train_epoch(minibatch_size, training_data, epoch_lr, epoch_size_limit, validation_data)
+
+            # Testing data results are ints while training data results are one-hot vectors
+            results.append("Train performance: " + str(self.test([[example[0].reshape(1, 28, 28), np.argmax(example[1])] for example in training_data_used])))
+            results.append("Test performance: " + str(self.test(test_data)))
+
+            print('{0:<10} | {1:<40} | {2:<40} | {3:<40}'.format(*results))
 
             if save_file:
                 with open(save_file, 'wb') as f:
@@ -233,7 +245,6 @@ class Network:
             epoch_cnt += 1
 
     def train_epoch(self, minibatch_size, training_data, learning_rate, epoch_size_limit, validation_data=None):
-        print(learning_rate)
         random.shuffle(training_data)
 
         if epoch_size_limit is not None:
@@ -261,6 +272,8 @@ class Network:
             # TODO Make verbose option
             # print(str(cnt) + ' training examples exhausted.')
 
+        return training_data
+
     def test(self, test_data):
         successful = 0
         for example in test_data:
@@ -272,7 +285,7 @@ class Network:
             if np.argmax(result) == output:
                 successful += 1
 
-        print(successful / len(test_data) * 100)
+        return successful / len(test_data) * 100
 
 
 class FlatteningLayer(Layer):
@@ -654,6 +667,8 @@ def main():
                                     convolution_size=5,
                                     stride=1,
                                     filter_count=16),
+                                    # activation_function=relu,
+                                    # activation_derivative=relup),
                  MaxPoolingLayer((1, 16, 24, 24), 0, pool_width=2, stride=2),
                  # ActivationLayer(sig, sigp),
 
@@ -661,6 +676,8 @@ def main():
                                     convolution_size=5,
                                     stride=1,
                                     filter_count=16),
+                                    # activation_function=relu,
+                                    # activation_derivative=relup),
                  MaxPoolingLayer((1, 16, 8, 8), 0, pool_width=2, stride=2),
                  # ActivationLayer(sig, sigp),
 
@@ -707,10 +724,10 @@ def main():
 
     if args.test:
         n.load(args.test)
-        n.test(test_data)
+        print(n.test(test_data))
 
     else:
-        n.train(epochs=60,
+        n.train(epochs=240,
                 minibatch_size=64,
                 training_data=training_data,
                 learning_rate=0.3, #[0.006, None, 0.006, None, None, 3, 3],
