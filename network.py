@@ -165,7 +165,6 @@ class Network:
             raise ValueError
 
         self.layers = layers
-        self.learning_rate = 3
 
     def propagate(self, last_activation, train=False):
         for layer in self.layers:
@@ -187,19 +186,26 @@ class Network:
 
         self.layers[0].backpropagate(last_error, input, True)
 
-    def gradient_descent(self, minibatch_inputs, minibatch_outputs):
+    def gradient_descent(self, minibatch_inputs, minibatch_outputs, learning_rate):
 
         assert len(minibatch_inputs) == len(minibatch_outputs)
+
+        lr_list = isinstance(learning_rate, list)
+
+        if lr_list:
+            assert len(learning_rate) == len(self.layers)
+        else:
+            learning_rate = [learning_rate]*len(self.layers)
 
         for inputs, output in zip(minibatch_inputs, minibatch_outputs):
             result = self.propagate(inputs, train=True)
             self.backpropagate(inputs, output, result)
 
         for l in range(len(self.layers) - 1, 0, -1):
-            self.layers[l].gradient_decent(self.learning_rate, self.layers[l-1].past_activations)
+            self.layers[l].gradient_decent(learning_rate[l], self.layers[l-1].past_activations)
 
         # TODO This has to be done after since it deletes cached activations, change caching?
-        self.layers[0].gradient_decent(self.learning_rate, minibatch_inputs, True)
+        self.layers[0].gradient_decent(learning_rate[0], minibatch_inputs, True)
 
     def load(self, pickle_file):
         try:
@@ -208,16 +214,16 @@ class Network:
         except FileNotFoundError:
             pass
 
-    def train(self, epochs, minibatch_size, training_data, test_data, validation_data=None, save_file=''):
+    def train(self, epochs, minibatch_size, training_data, test_data, learning_rate=None, validation_data=None, save_file=''):
         for epoch in range(epochs):
-            self.train_epoch(minibatch_size, training_data, validation_data)
+            self.train_epoch(minibatch_size, training_data, learning_rate, validation_data)
             self.test(test_data)
 
             if save_file:
                 with open(save_file, 'wb') as f:
                     pickle.dump(self.layers, f)
 
-    def train_epoch(self, minibatch_size, training_data, validation_data=None):
+    def train_epoch(self, minibatch_size, training_data, learning_rate, validation_data=None):
         random.shuffle(training_data)
 
         minibatches = [training_data[k * minibatch_size:(k + 1) * minibatch_size] for k in
@@ -230,7 +236,7 @@ class Network:
             minibatch_outputs = [example[1] for example in minibatch]
 
             # start = time.time()
-            self.gradient_descent(minibatch_inputs, minibatch_outputs)
+            self.gradient_descent(minibatch_inputs, minibatch_outputs, learning_rate)
             # end = time.time()
             # print('whole gradient decent: ')
             # print(end - start)
@@ -240,7 +246,7 @@ class Network:
             #     return
 
             # TODO Make verbose option
-            print(str(cnt) + ' training examples exhausted.')
+            # print(str(cnt) + ' training examples exhausted.')
 
     def test(self, test_data):
         successful = 0
@@ -528,9 +534,9 @@ class ConvolutionalLayer(Layer):
         # TODO Lowering the filter size (increasing number of filter applications) requires decrease in learning rate?
         # TODO Make learning rate configurable per layer?
         self.conv_weights = \
-            np.subtract(self.conv_weights, (0.006 / minibatch_size) * sum(self.past_conv_errors))
+            np.subtract(self.conv_weights, (learning_rate / minibatch_size) * sum(self.past_conv_errors))
         self.conv_bias = \
-            np.subtract(self.conv_bias, (0.006 / minibatch_size) * sum(filter_layer_errors))
+            np.subtract(self.conv_bias, (learning_rate / minibatch_size) * sum(filter_layer_errors))
 
         self.past_conv_errors = []
 
@@ -628,7 +634,7 @@ MINIBATCH_SIZE = 64
 
 
 def main():
-    # np.random.seed(0)
+    np.random.seed(1234)
 
     n = Network([ConvolutionalLayer((1, 28, 28), 0,
                                     convolution_size=5,
@@ -690,9 +696,10 @@ def main():
         n.test(test_data)
 
     else:
-        n.train(epochs=30,
+        n.train(epochs=60,
                 minibatch_size=64,
                 training_data=training_data,
+                learning_rate=[0.006, None, 0.006, None, None, 3, 3], # 0.3,
                 test_data=test_data,
                 save_file=instance_filename)
 
