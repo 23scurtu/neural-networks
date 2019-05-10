@@ -214,16 +214,26 @@ class Network:
         except FileNotFoundError:
             pass
 
-    def train(self, epochs, minibatch_size, training_data, test_data, learning_rate=None, epoch_size_limit=None, validation_data=None, save_file=''):
+    def train(self, epochs, minibatch_size, training_data, test_data, learning_rate=None, decay_rate=None, epoch_size_limit=None, validation_data=None, save_file=''):
+        epoch_cnt = 0
+
         for epoch in range(epochs):
-            self.train_epoch(minibatch_size, training_data, learning_rate, epoch_size_limit, validation_data)
+            if decay_rate is not None and not isinstance(learning_rate, list):
+                epoch_lr = (1 / (1 + decay_rate*epoch_cnt))*learning_rate
+            else:
+                epoch_lr = learning_rate
+
+            self.train_epoch(minibatch_size, training_data, epoch_lr, epoch_size_limit, validation_data)
             self.test(test_data)
 
             if save_file:
                 with open(save_file, 'wb') as f:
                     pickle.dump(self.layers, f)
 
+            epoch_cnt += 1
+
     def train_epoch(self, minibatch_size, training_data, learning_rate, epoch_size_limit, validation_data=None):
+        print(learning_rate)
         random.shuffle(training_data)
 
         if epoch_size_limit is not None:
@@ -703,8 +713,9 @@ def main():
         n.train(epochs=60,
                 minibatch_size=64,
                 training_data=training_data,
-                learning_rate=[0.006, None, 0.006, None, None, 3, 3], # 0.3,
-                epoch_size_limit=5000,
+                learning_rate=0.3, #[0.006, None, 0.006, None, None, 3, 3],
+                decay_rate=4*0.3/60,
+                # epoch_size_limit=5000,
                 test_data=test_data,
                 save_file=instance_filename)
 
