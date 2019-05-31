@@ -16,6 +16,7 @@ import torch.nn as nn
 import torch
 import torch.utils.data
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Network(nn.Module):
     def __init__(self):
@@ -94,12 +95,15 @@ def train_epoch(model, loss_criterion, optimizer, minibatch_size, training_data,
     if epoch_size_limit is not None:
         training_data = training_data[:epoch_size_limit]
 
-    inputs = [torch.Tensor(example[0]) for example in training_data]
-    labels = [torch.Tensor(example[1]) for example in training_data]
+    inputs = torch.stack([torch.Tensor(example[0]).cuda() for example in training_data], dim=0)
+    labels = torch.stack([torch.Tensor(example[1]).cuda() for example in training_data], dim=0)
+
+    inputs = inputs.to(device)
+    labels = labels.to(device)
 
     # print(np.stack(inputs, axis=0)[0])
-    train_loader = torch.utils.data.DataLoader(dataset=torch.utils.data.TensorDataset(torch.stack(inputs, dim=0),
-                                                                                      torch.stack(labels, dim=0)),
+    train_loader = torch.utils.data.DataLoader(dataset=torch.utils.data.TensorDataset(inputs,
+                                                                                      labels),
                                                batch_size=minibatch_size,
                                                shuffle=False)
 
@@ -158,11 +162,14 @@ def test(model, test_data):
         input = np.reshape(example[0], (1, 1, 28, 28))
         label = example[1]
 
-        output = model(torch.Tensor(input))
+        input = torch.Tensor(input).to(device)
+        # label = label.to(device)
+
+        output = model(input)
 
         # print(output)
 
-        if np.argmax(output.detach().numpy()) == label:
+        if np.argmax(output.detach().cpu().numpy()) == label:
             successful += 1
 
     return successful / len(test_data) * 100
@@ -177,12 +184,13 @@ test_data = [[example[0].reshape(1, 28, 28), example[1]] for example in test_dat
 # training_data = [[example[0].flatten(), example[1]] for example in training_data]
 # test_data = [[example[0].flatten(), example[1]] for example in test_data]
 
-n = Network()
+n = Network().to(device)
+
 train(  model=n,
         epochs=240,
         minibatch_size=64,
         training_data=training_data,
-        learning_rate=0.005, #[0.006, None, 0.006, None, None, 3, 3],
+        learning_rate=0.0001, #[0.006, None, 0.006, None, None, 3, 3],
         decay_rate=4*0.3/60,
         epoch_size_limit=5000,
         test_data=test_data,
